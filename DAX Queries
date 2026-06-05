@@ -1,0 +1,66 @@
+let
+    #"01_Netflix_2016_2025" = let
+    Source = Csv.Document(File.Contents("C:\Users\aviko\Downloads\01_Netflix_2016_2025.csv"),[Delimiter=",", Columns=10, Encoding=1252, QuoteStyle=QuoteStyle.None]),
+    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers",{{"Year", Int64.Type}, {"Title", type text}, {"IMDb", type number}, {"Viewership", type text}, {"Directors/Creators", type text}, {"Lead Actors", type text}, {"Release Date", type date}, {"Duration", type text}, {"Country", type text}, {"Genre", type text}})
+in
+    let
+    Source = #"Changed Type",
+
+    AddViewershipValue = Table.AddColumn(
+        Source,
+        "Viewership_Value",
+        each
+            let
+                rawText = try Text.Upper(Text.Trim(Text.From([Viewership]))) otherwise null,
+                noSpaces = if rawText = null then null else Text.Replace(rawText, " ", ""),
+                noCommas = if noSpaces = null then null else Text.Replace(noSpaces, ",", ""),
+                numericText = if noCommas = null then null else Text.Select(noCommas, {"0".."9", ".", "-"}),
+                baseNumber = try Number.FromText(numericText) otherwise null,
+                multiplier =
+                    if noCommas = null then null
+                    else if Text.Contains(noCommas, "B") then 1000000000
+                    else if Text.Contains(noCommas, "M") then 1000000
+                    else if Text.Contains(noCommas, "K") then 1000
+                    else 1
+            in
+                if baseNumber = null then null else baseNumber * multiplier,
+        type number
+    ),
+
+    AddViewershipUnit = Table.AddColumn(
+        AddViewershipValue,
+        "Viewership_Unit",
+        each
+            let
+                txt = try Text.Upper(Text.Trim(Text.From([Viewership]))) otherwise ""
+            in
+                if Text.Contains(txt, "STREAMS") then "Streams"
+                else if Text.Contains(txt, "VIEWS") then "Views"
+                else if Text.Contains(txt, "HOURS") then "Hours"
+                else if Text.Contains(txt, "MINUTES") then "Minutes"
+                else if Text.Contains(txt, "POINTS") then "Points"
+                else "Other",
+        type text
+    )
+in
+    AddViewershipUnit,
+    #"Added Custom" = Table.AddColumn(#"01_Netflix_2016_2025", "Performance Type", each if [Viewership_Value] = null then "Qualitative"
+else "Numeric"),
+    #"Inserted Month" = Table.AddColumn(#"Added Custom", "Month", each Date.Month([Release Date]), Int64.Type),
+    #"Renamed Columns" = Table.RenameColumns(#"Inserted Month",{{"Month", "Release Month"}}),
+    #"Inserted Quarter" = Table.AddColumn(#"Renamed Columns", "Quarter", each Date.QuarterOfYear([Release Date]), Int64.Type),
+    #"Added Custom1" = Table.AddColumn(#"Inserted Quarter", "Content type", each let d = try Text.Upper(Text.From([Duration])) otherwise "" in if Text.Contains(d, "WEBFILM") or Text.Contains(d, "WEB FILM") then "Movie" else "TV Show", type text),
+    #"Filtered Rows" = Table.SelectRows(#"Added Custom1", each true),
+    #"Added Custom2" = Table.AddColumn(#"Filtered Rows", "Season Number", each if Text.Contains([Duration], ";")
+then Number.From(Text.Select(Text.BeforeDelimiter([Duration], ";"), {"0".."9"}))
+else null),
+    #"Added Custom3" = Table.AddColumn(#"Added Custom2", "Total Minutes", each if Text.Contains([Duration], ";")
+then Number.From(Text.Select(Text.AfterDelimiter([Duration], ";"), {"0".."9"}))
+else Number.From(Text.Select([Duration], {"0".."9"}))),
+    #"Added Custom4" = Table.AddColumn(#"Added Custom3", "IMDb Category", each if [IMDb] >= 9 then "Excellent"
+else if [IMDb] >= 8 then "Very Good"
+else if [IMDb] >= 7 then "Good"
+else "Average")
+in
+    #"Added Custom4"
